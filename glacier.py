@@ -32,6 +32,7 @@ import os
 import os.path
 import sys
 import time
+import re
 
 import boto.glacier
 import iso8601
@@ -95,6 +96,15 @@ def get_user_cache_dir():
         raise RuntimeError('Cannot find user home directory')
     return os.path.join(home, '.cache')
 
+def get_user_credential_dir():
+    xdg_cache_home = os.getenv('XDG_CACHE_HOME')
+    if xdg_cache_home is not None:
+        return xdg_cache_home
+
+    home = os.getenv('HOME')
+    if home is None:
+        raise RuntimeError('Cannot find user home directory')
+    return os.path.join(home,'.boto')
 
 class Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
@@ -400,6 +410,24 @@ class App(object):
             if job_list:
                 print(*job_list, sep="\n")
 
+    def config_initialize(self, args):
+        try:
+            f = open(args.config_file,'r')
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            w = open(config_path,'w')
+            r = open(get_user_credential_dir(),'w')
+            r.write("[Credentials]\n")
+            r.write("aws_access_key_id = " + f.readline())
+            r.write("aws_secret_access_key = " + f.readline())
+            for line in f: 
+       	        w.write(line)
+            f.close()
+            w.close()
+            r.close()
+            sys.exit(1)
+        except IOError as e:
+            print ("CONFIG FILE IO EXCEPTION")
+
     def vault_list(self, args):
         print(*[vault.name for vault in self.connection.list_vaults()],
                 sep="\n")
@@ -622,7 +650,12 @@ class App(object):
     def main(self):
         parser = argparse.ArgumentParser()
         parser.add_argument('--region', default='us-east-1')
-        subparsers = parser.add_subparsers()
+        subparsers = parser.add_subparsers()	
+
+        config_subparser = subparsers.add_parser('config')
+        config_subparser.set_defaults(func=self.config_initialize)
+        config_subparser.add_argument('config_file')
+        
         vault_subparser = subparsers.add_parser('vault').add_subparsers()
         vault_subparser.add_parser('list').set_defaults(func=self.vault_list)
         vault_create_subparser = vault_subparser.add_parser('create')
@@ -674,8 +707,11 @@ class App(object):
         job_subparser = subparsers.add_parser('job').add_subparsers()
         job_subparser.add_parser('list').set_defaults(func=self.job_list)
         args = parser.parse_args()
-        self.connection = boto.glacier.connect_to_region(args.region)
-        self.cache = Cache(get_connection_account(self.connection))
+        try:
+            self.connection = boto.glacier.connect_to_region(args.region)
+            self.cache = Cache(get_connection_account(self.connection))
+        except boto.exception.NoAuthHandlerFound:
+            print ("INCORRECT CONNECTION OR CREDENTIAL")
         try:
             args.func(args)
         except RetryConsoleError, e:

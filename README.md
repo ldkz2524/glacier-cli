@@ -1,15 +1,12 @@
-glacier-cli
+glacier-cli (modified version)
 ===========
 
 This tool provides a sysadmin-friendly command line interface to [Amazon
 Glacier][glacier], turning Glacier into an easy-to-use storage backend. It
 automates tasks which would otherwise require a number of separate steps (job
 submission, polling for job completion and retrieving the results of jobs).
-It provides integration with [git-annex][git-annex], making Glacier even more
-useful.
 
 [glacier]: http://aws.amazon.com/glacier/
-[git-annex]: http://git-annex.branchable.com/
 
 glacier-cli uses Amazon Glacier's archive description field to keep friendly
 archive names, although you can also address archives directly by using their
@@ -24,49 +21,7 @@ Glacier vaults. It can deal gracefully with vaults changing from other machines
 and/or other applications, and introduces no new special formats from the point
 of view of a vault.
 
-Example with git-annex
-----------------------
-
-    $ echo 42 > example-content
-    $ git annex add example-content
-    add example-content (checksum...) ok
-    (Recording state in git...)
-    $ git commit -m'Add example-content'
-    [master cc632d1] Add example-content
-     1 file changed, 1 insertion(+)
-     create mode 120000 example/example-content
-_(the local annex now stores example-content)_
-
-    $ git annex copy --to glacier example-content
-    copy example-content (gpg) (checking glacier...) (to glacier...) 
-    ok
-_(copying content to Amazon Glacier is straightforward)_
-
-    $ git annex drop example-content
-    drop example-content (gpg) (checking glacier...) ok
-_(now the only copy of the data is in Amazon Glacier)_
-
-    $ git annex get --from glacier example-content
-    get example-content (from glacier...) (gpg) 
-    glacier: queued retrieval job for archive 'GPGHMACSHA1--2945f64be96ccbb9feb4d8ff44ac9692fdbe654e'
-
-      retrieve hook exited nonzero!
-    failed
-    git-annex: get: 1 failed
-_(this fails on the first attempt since the data isn't immediately available;
-but it does submit a job to Amazon Glacier requesting the data, so a later
-retry will work)_
-
-_(...four hours later...)_
-
-    $ git annex get --from glacier example-content
-    get example-content (from glacier...) (gpg) 
-    ok
-    $ cat example-content
-    42
-_(content successfully retrieved from Glacier)_
-
-Example without git-annex
+Example
 -------------------------
 
     $ glacier vault list
@@ -124,12 +79,6 @@ Create a symlink `boto` in the same directory as `glacier.py` to point to the
 `boto` directory in the glacier branch. Then you can run `glacier.py` directly,
 or symlink `/usr/local/bin/glacier` to it to make it generally available.
 
-I'll package this up properly when boto's glacier support is released.
-
-[glacier branch of boto]: https://github.com/boto/boto/tree/glacier
-
-### Example
-
     git clone -b glacier git://github.com/boto/boto.git
     git clone git://github.com/basak/glacier-cli.git
     ln -s ../boto/boto glacier-cli/boto
@@ -142,71 +91,27 @@ or for just yourself, if you have `~/bin` in your path:
 
     ln -s $PWD/glacier-cli/glacier.py ~/bin/glacier
 
-Integration with git-annex
---------------------------
+Next, glacier-cli also requires two python modules.
 
-Using glacier-cli via [git-annex][git-annex] is the easiest way to use Amazon
-Glacier from the CLI.
+	sudo easy_install iso8601
+	sudo easy_install sqlalchemy
 
-git-annex integration is currently experimental and uses git-annex's [special
-remote hooks](http://git-annex.branchable.com/special_remotes/hook/).
+If you haven't done so already, create a credential file for boto
 
-### Setup
+	vim ~/.boto
 
-I regret that initial setup is is a bit complicated right now. I hope to make
-this simpler soon.
+In this file, include the following lines:
 
-Older versions of git-annex call the hooks without passing through HOME or
-PATH, making it difficult to find my working copy of glacier-cli or my Amazon
-keys. This includes the version of git-annex included with Ubuntu 12.04. I had
-to write a wrapper that exports `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
-and then calls `glacier` with `exec /path/to/glacier "$@"`. With newer versions
-of git-annex (Debian wheezy and the soon-to-be-released Ubuntu 12.10), you
-should be able to configure the hooks to directly call glacier without a
-wrapper and without having to use absolute paths.
-
-So my hooks look like this:
-
-    glacier-store-hook = /path/to/glacier-wrapper archive upload --name=\"$ANNEX_KEY\" vault-name \"$ANNEX_FILE\"
-    glacier-retrieve-hook = /path/to/glacier-wrapper archive retrieve -o \"$ANNEX_FILE\" vault-name \"$ANNEX_KEY\"
-    glacier-remove-hook = /path/to/glacier-wrapper archive delete vault-name \"$ANNEX_KEY\"
-    glacier-checkpresent-hook = /path/to/glacier-wrapper archive checkpresent vault-name --quiet \"$ANNEX_KEY\"
-
-and I expect users of newer versions of git-annex to be able to use hooks that
-looks like this:
-
-    glacier-store-hook = glacier archive upload --name=\"$ANNEX_KEY\" vault-name \"$ANNEX_FILE\"
-    glacier-retrieve-hook = glacier archive retrieve -o \"$ANNEX_FILE\" vault-name \"$ANNEX_KEY\"
-    glacier-remove-hook = glacier archive delete vault-name \"$ANNEX_KEY\"
-    glacier-checkpresent-hook = glacier archive checkpresent vault-name --quiet \"$ANNEX_KEY\"
-
-To add the glacier remote:
-
-    git annex initremote glacier type=hook hooktype=glacier encryption=<key-id>
-
-You probably want to set git-annex to only use glacier as a last resort in
-order to control your costs:
-
-    git config remote.glacier.annex-cost 1000
-
-Copying to the remote works as normal. Retrieving from the remote initially
-fails after a job is queued. If you try again after the job is complete
-(usually around four hours), then retrieval should work successfully. You can
-monitor the status of the jobs using `glacier job list`; when the job status
-changes from `p` (pending) to `d` (done), a retrieval should work. Note that
-jobs expire from Amazon Glacier after around 24 hours or so.
-
-`glacier checkpresent` cannot always check for certain that an archive
-definitely exists within Glacier. Vault inventories take hours to retrieve,
-and even when retrieved do not necessarily represent an up-to-date state. For
-this reason and as a compromise, `glacier checkpresent` will confirm to
-git-annex that an archive exists if it is known to have existed less than 60
-hours ago. You may override this permitted lag interval with the `--max-age`
-option to `glacier checkpresent`.
+//From the below line
+	[Credentials]
+	aws_access_key_id = <your access key>
+	aws_secret_access_key = <your secret key>
+//Until the above line
 
 Commands
 --------
-
+* <code>glacier --region <em>region-name</em></code>
+* <code>glacier config <em>config-file</em></code>
 * <code>glacier vault list</code>
 * <code>glacier vault create <em>vault-name</em></code>
 * <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code>
@@ -311,8 +216,6 @@ Contact
 -------
 
 * For bugs or feature requests please create a [glacier-cli github
-  issue](https://github.com/basak/glacier-cli/issues).
-* Reach me on Twitter: [@robiebasak](https://twitter.com/robiebasak), but
-  please tweet me an email address (or a [reCAPTCHA
-  mailhide](http://www.google.com/recaptcha/mailhide/) URL, or some other way
-  for me to reply) if my reply is likely to take more than 140 characters!
+  issue](https://github.com/ldkz2524/glacier-cli/issues).
+* Modified based on [glacier-cli github](https://github.com/basak/glacier-cli)
+* Modified by [Dongkeun Lee](ldkz2524@ucla.edu])

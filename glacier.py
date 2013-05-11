@@ -105,6 +105,19 @@ def get_user_credential_dir():
     if home is None:
         raise RuntimeError('Cannot find user home directory')
     return os.path.join(home,'.boto')
+    
+def read_default_region():
+    try:
+        config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+        w = open(config_path,'r')
+        w.readline()
+        w.readline()
+        w.readline()
+        string = w.readline()
+        w.close()
+        return string
+    except IOError as e:
+        print ("CACHE DOES NOT EXIST")
 
 class Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
@@ -648,8 +661,12 @@ class App(object):
 
 
     def main(self):
+        
+        default_region = 'us-east-1'
+        default_region = read_default_region().rstrip('\n')      
+ 
         parser = argparse.ArgumentParser()
-        parser.add_argument('--region', default='us-east-1')
+        parser.add_argument('--region', default=default_region)
         subparsers = parser.add_subparsers()	
 
         config_subparser = subparsers.add_parser('config')

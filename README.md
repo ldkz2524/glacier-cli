@@ -218,4 +218,4 @@ Contact
 * For bugs or feature requests please create a [glacier-cli github
   issue](https://github.com/ldkz2524/glacier-cli/issues).
 * Modified based on [glacier-cli github](https://github.com/basak/glacier-cli)
-* Modified by [Dongkeun Lee](ldkz2524@ucla.edu])
+* Modified by Dongkeun Lee[E-mail](ldkz2524@ucla.edu])

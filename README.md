@@ -111,7 +111,12 @@ In this file, include the following lines:
 Commands
 --------
 * <code>glacier --region <em>region-name</em></code>
-* <code>glacier config <em>config-file</em></code>
+* <code>glacier config create <em>config-file</em></code>
+* <code>glacier config load <em>config-file</em></code>
+* <code>glacier config change region <em>new-value</em></code>
+* <code>glacier config change free <em>new-value</em></code>
+* <code>glacier config change allowance <em>new-value</em></code>
+* <code>glacier config download <em>config-file</em></code>
 * <code>glacier vault list</code>
 * <code>glacier vault create <em>vault-name</em></code>
 * <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code>
@@ -218,4 +223,4 @@ Contact
 * For bugs or feature requests please create a [glacier-cli github
   issue](https://github.com/ldkz2524/glacier-cli/issues).
 * Modified based on [glacier-cli github](https://github.com/basak/glacier-cli)
-* Modified by Dongkeun Lee[E-mail](ldkz2524@ucla.edu])
+* Modified by Dongkeun Lee (ldkz2524@ucla.edu)

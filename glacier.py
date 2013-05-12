@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2012 Robie Basak
+# Copyright (c) 2013 Robie Basak (modified by Dongkeun Lee)
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -33,6 +33,7 @@ import os.path
 import sys
 import time
 import re
+import datetime
 
 import boto.glacier
 import iso8601
@@ -55,9 +56,25 @@ class ConsoleError(RuntimeError):
     def __init__(self, m):
         self.message = m
 
-
 class RetryConsoleError(ConsoleError): pass
 
+class config:
+    def __init__(self):
+        try:
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            w = open(config_path,'r')
+            self.archive_cache = w.readline()
+            self.vault_cache = w.readline()
+            self.job_cache = w.readline()
+            self.default_region = w.readline()
+            self.current_retrieval = w.readline()
+            self.last_retrieved = w.readline()
+            self.total_storage = w.readline()
+            self.only_free = w.readline()
+            self.maximum_time_allowance = w.readline()
+            w.close()
+        except IOError as e:
+            print ("CACHE DOES NOT EXIST")
 
 def info(message):
     print(insert_prefix_to_lines('%s: info: ' % PROGRAM_NAME, message),
@@ -106,19 +123,6 @@ def get_user_credential_dir():
         raise RuntimeError('Cannot find user home directory')
     return os.path.join(home,'.boto')
     
-def read_default_region():
-    try:
-        config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
-        w = open(config_path,'r')
-        w.readline()
-        w.readline()
-        w.readline()
-        string = w.readline()
-        w.close()
-        return string
-    except IOError as e:
-        print ("CACHE DOES NOT EXIST")
-
 class Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
     class Archive(Base):
@@ -139,7 +143,8 @@ class Cache(object):
 
     def __init__(self, key):
         self.key = key
-        db_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'db')
+        loaded_config = config()
+        db_path = os.path.join(get_user_cache_dir(), 'glacier-cli', loaded_config.archive_cache)
         mkdir_p(os.path.dirname(db_path))
         self.engine = sqlalchemy.create_engine('sqlite:///%s' % db_path)
         self.Base.metadata.create_all(self.engine)
@@ -441,6 +446,80 @@ class App(object):
         except IOError as e:
             print ("CONFIG FILE IO EXCEPTION")
 
+    def config_create(self, args):
+        try:
+            f = open(args.config_file,'w')
+            f.write("<write access key here>\n")
+            f.write("<write secret key here>\n")
+            f.write(args.config_file + "_archive\n")
+            f.write(args.config_file + "_vault\n")
+            f.write(args.config_file + "_job\n")
+            f.write("us-east-1\n")
+            f.write("0\n")
+            now = datetime.datetime.now()
+            today = now.strftime("%m/%d/%y")
+            f.write(today+"\n")
+            f.write("0\n")
+            f.write("yes\n")
+            f.write("30\n")
+            f.close()
+        except IOError as e:
+            print ("FILE ERROR")
+
+    def config_change_region(self,args):
+        try:
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            loaded_config = config()
+            f = open(config_path,'w')
+            f.write(loaded_config.archive_cache)
+            f.write(loaded_config.vault_cache)
+            f.write(loaded_config.job_cache)
+            f.write(args.new_value+"\n")
+            f.write(loaded_config.current_retrieval)
+            f.write(loaded_config.last_retrieved)
+            f.write(loaded_config.total_storage)
+            f.write(loaded_config.only_free)
+            f.write(loaded_config.maximum_time_allowance)
+            f.close()
+        except IOError as e:
+            print ("File ERROR")
+
+    def config_change_free(self,args):
+        try:
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            loaded_config = config()
+            f = open(config_path,'w')
+            f.write(loaded_config.archive_cache)
+            f.write(loaded_config.vault_cache)
+            f.write(loaded_config.job_cache)
+            f.write(loaded_config.default_region)
+            f.write(loaded_config.current_retrieval)
+            f.write(loaded_config.last_retrieved)
+            f.write(loaded_config.total_storage)
+            f.write(args.new_value+"\n")
+            f.write(loaded_config.maximum_time_allowance)
+            f.close()
+        except IOError as e:
+            print ("File ERROR")
+
+    def config_change_day(self,args):
+        try:
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            loaded_config = config()
+            f = open(config_path,'w')
+            f.write(loaded_config.archive_cache)
+            f.write(loaded_config.vault_cache)
+            f.write(loaded_config.job_cache)
+            f.write(loaded_config.default_region)
+            f.write(loaded_config.current_retrieval)
+            f.write(loaded_config.last_retrieved)
+            f.write(loaded_config.total_storage)
+            f.write(loaded_config.only_free)
+            f.write(args.new_value+"\n")
+            f.close()
+        except IOError as e:
+            print ("File ERROR")
+
     def vault_list(self, args):
         print(*[vault.name for vault in self.connection.list_vaults()],
                 sep="\n")
@@ -662,16 +741,32 @@ class App(object):
 
     def main(self):
         
+        loaded_config = config()
         default_region = 'us-east-1'
-        default_region = read_default_region().rstrip('\n')      
+        default_region = loaded_config.default_region.rstrip('\n')      
  
         parser = argparse.ArgumentParser()
         parser.add_argument('--region', default=default_region)
         subparsers = parser.add_subparsers()	
 
-        config_subparser = subparsers.add_parser('config')
-        config_subparser.set_defaults(func=self.config_initialize)
-        config_subparser.add_argument('config_file')
+        config_subparser = subparsers.add_parser('config').add_subparsers()
+        config_create_subparser = config_subparser.add_parser('create')
+        config_create_subparser.set_defaults(func=self.config_create)
+        config_create_subparser.add_argument('config_file')
+        config_load_subparser = config_subparser.add_parser('load')
+        config_load_subparser.set_defaults(func=self.config_initialize)
+        config_load_subparser.add_argument('config_file')
+        config_change_subparser = config_subparser.add_parser('change').add_subparsers()
+        config_change_region_subparser = config_change_subparser.add_parser('region')
+        config_change_region_subparser.set_defaults(func=self.config_change_region)
+        config_change_region_subparser.add_argument('new_value')
+        config_change_free_subparser = config_change_subparser.add_parser('free')
+        config_change_free_subparser.set_defaults(func=self.config_change_free)
+        config_change_free_subparser.add_argument('new_value', metavar='Retrieve_only_until_free_tier_(yes_or_no)')        
+        config_change_day_subparser = config_change_subparser.add_parser('allowance')
+        config_change_day_subparser.set_defaults(func=self.config_change_day)
+        config_change_day_subparser.add_argument('new_value', metavar='Maximum_no_of_days_for_retrieval')
+        #develop config download
         
         vault_subparser = subparsers.add_parser('vault').add_subparsers()
         vault_subparser.add_parser('list').set_defaults(func=self.vault_list)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright (c) 2013 Robie Basak (modified by Dongkeun Lee)
+#Copyright (c) 2013 Robie Basak (modified by Dongkeun Lee)
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -63,9 +63,6 @@ class config:
         try:
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
             w = open(config_path,'r')
-            self.archive_cache = w.readline()
-            self.vault_cache = w.readline()
-            self.job_cache = w.readline()
             self.default_region = w.readline()
             self.current_retrieval = w.readline()
             self.last_retrieved = w.readline()
@@ -122,8 +119,42 @@ def get_user_credential_dir():
     if home is None:
         raise RuntimeError('Cannot find user home directory')
     return os.path.join(home,'.boto')
+
+class Vault_Cache(object):
+    Base = sqlalchemy.ext.declarative.declarative_base()
+    class Vault(Base):
+        __tablename__ = 'vault'
+        name = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
+        region = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
+        key = sqlalchemy.Column(sqlalchemy.String, nullable=False)
+        last_synced = sqlalchemy.Column(sqlalchemy.Integer)
+        created_here = sqlalchemy.Column(sqlalchemy.Integer)
+        deleted_here = sqlalchemy.Column(sqlalchemy.Integer)
+
+        def __init__(self, *args, **kwards):
+            self.created_here = time.time()
+            super(Vault_Cache.Vault, self).__init__(*args, **kwargs)
+            
+    Session = sqlalchemy.orm.sessionmaker()
+
+    def __init__(self, key):
+        self.key = key
+        db_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'vault_cache')
+        mkdir_p(os.path.dirname(db_path))
+        self.engine = sqlalchemy.create_engine('sqlite:///%s' % db_path)
+        self.Base.metadata.create_all(self.engine)
+        self.Session.configure(bind=self.engine)
+        self.session = self.Session()
+
+    def add_vault(self, name, region):
+        self.session.add(self.Vault(key=self.key,
+                                      name=name, region=region))
     
-class Cache(object):
+    def _get_vault_query_by_ref(self, name, region):
+        return self.session.query(self.Archive).filter_by(
+                key=self.key, name=name, deleted_here=None, region=region)
+
+class Archive_Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
     class Archive(Base):
         __tablename__ = 'archive'
@@ -137,14 +168,13 @@ class Cache(object):
 
         def __init__(self, *args, **kwargs):
             self.created_here = time.time()
-            super(Cache.Archive, self).__init__(*args, **kwargs)
+            super(Archive_Cache.Archive, self).__init__(*args, **kwargs)
 
     Session = sqlalchemy.orm.sessionmaker()
 
     def __init__(self, key):
         self.key = key
-        loaded_config = config()
-        db_path = os.path.join(get_user_cache_dir(), 'glacier-cli', loaded_config.archive_cache)
+        db_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'archive_cache')
         mkdir_p(os.path.dirname(db_path))
         self.engine = sqlalchemy.create_engine('sqlite:///%s' % db_path)
         self.Base.metadata.create_all(self.engine)
@@ -428,6 +458,9 @@ class App(object):
             if job_list:
                 print(*job_list, sep="\n")
 
+    def view_sync(self, args):
+        print("hello")
+
     def config_initialize(self, args):
         try:
             f = open(args.config_file,'r')
@@ -471,9 +504,6 @@ class App(object):
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
             loaded_config = config()
             f = open(config_path,'w')
-            f.write(loaded_config.archive_cache)
-            f.write(loaded_config.vault_cache)
-            f.write(loaded_config.job_cache)
             f.write(args.new_value+"\n")
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
@@ -489,9 +519,6 @@ class App(object):
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
             loaded_config = config()
             f = open(config_path,'w')
-            f.write(loaded_config.archive_cache)
-            f.write(loaded_config.vault_cache)
-            f.write(loaded_config.job_cache)
             f.write(loaded_config.default_region)
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
@@ -507,9 +534,6 @@ class App(object):
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
             loaded_config = config()
             f = open(config_path,'w')
-            f.write(loaded_config.archive_cache)
-            f.write(loaded_config.vault_cache)
-            f.write(loaded_config.job_cache)
             f.write(loaded_config.default_region)
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
@@ -744,10 +768,14 @@ class App(object):
         loaded_config = config()
         default_region = 'us-east-1'
         default_region = loaded_config.default_region.rstrip('\n')      
- 
         parser = argparse.ArgumentParser()
         parser.add_argument('--region', default=default_region)
-        subparsers = parser.add_subparsers()	
+        subparsers = parser.add_subparsers()
+
+        view_subparser = subparsers.add_parser('view').add_subparsers()
+        view_sync_subparser = view_subparser.add_parser('sync')
+        view_sync_subparser.set_defaults(func=self.view_sync)
+        view_sync_subparser.add_argument('vault')
 
         config_subparser = subparsers.add_parser('config').add_subparsers()
         config_create_subparser = config_subparser.add_parser('create')
@@ -821,7 +849,8 @@ class App(object):
         args = parser.parse_args()
         try:
             self.connection = boto.glacier.connect_to_region(args.region)
-            self.cache = Cache(get_connection_account(self.connection))
+            self.cache = Archive_Cache(get_connection_account(self.connection))
+            self.v_cache = Vault_Cache(get_connection_account(self.connection))
         except boto.exception.NoAuthHandlerFound:
             print ("INCORRECT CONNECTION OR CREDENTIAL")
         try:

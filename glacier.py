@@ -128,11 +128,8 @@ class Vault_Cache(object):
         region = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
         key = sqlalchemy.Column(sqlalchemy.String, nullable=False)
         last_synced = sqlalchemy.Column(sqlalchemy.Integer)
-        created_here = sqlalchemy.Column(sqlalchemy.Integer)
-        deleted_here = sqlalchemy.Column(sqlalchemy.Integer)
 
-        def __init__(self, *args, **kwards):
-            self.created_here = time.time()
+        def __init__(self, *args, **kwargs):
             super(Vault_Cache.Vault, self).__init__(*args, **kwargs)
             
     Session = sqlalchemy.orm.sessionmaker()
@@ -147,12 +144,31 @@ class Vault_Cache(object):
         self.session = self.Session()
 
     def add_vault(self, name, region):
-        self.session.add(self.Vault(key=self.key,
-                                      name=name, region=region))
+        result = self.get_vault(name, region)
+        try:
+            result.one().name
+        except sqlalchemy.orm.exc.NoResultFound:
+            self.session.add(self.Vault(key=self.key, name=name, region=region))
+            self.session.commit()
     
-    def _get_vault_query_by_ref(self, name, region):
-        return self.session.query(self.Archive).filter_by(
-                key=self.key, name=name, deleted_here=None, region=region)
+    def get_vault(self, name, region):
+        return self.session.query(self.Vault).filter_by(
+                key=self.key, name=name, region=region)
+
+    def get_vault_list(self, region):
+        for vault in (
+                self.session.query(self.Vault).
+                             filter_by(key=self.key,
+                                       region=region).
+                             order_by(self.Vault.name)):
+            yield vault.name
+    def delete_vault(self, name, region):
+        try:
+            result = self.get_vault(name,region).one()
+            self.session.delete(result)
+            self.session.commit()
+        except sqlalchemy.orm.exc.NoResultFound:
+            return 1
 
 class Archive_Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
@@ -545,11 +561,29 @@ class App(object):
             print ("File ERROR")
 
     def vault_list(self, args):
-        print(*[vault.name for vault in self.connection.list_vaults()],
-                sep="\n")
+        for vault in self.connection.list_vaults():
+            try:
+                result = self.v_cache.get_vault(vault.name,args.region).one()
+            except sqlalchemy.orm.exc.NoResultFound:
+                self.v_cache.add_vault(vault.name, args.region)
+
+        for vault in self.v_cache.get_vault_list(args.region):
+            try:
+                result = self.connection.get_vault(vault)
+                print(result.name)
+            except boto.glacier.exceptions.UnexpectedHTTPResponseError:
+                self.v_cache.delete_vault(vault,args.region)
+
+    def vault_delete(self, args):
+        try:
+            self.connection.delete_vault(args.name)
+            self.v_cache.delete_vault(args.name,args.region)
+        except boto.glacier.exceptions.UnexpectedHTTPResponseError:
+            print("ERROR: VAULT NOT EMPTY")
 
     def vault_create(self, args):
         self.connection.create_vault(args.name)
+        self.v_cache.add_vault(args.name, args.region)
 
     def _vault_sync_reconcile(self, vault, job, fix=False):
         response = job.get_output()
@@ -772,7 +806,7 @@ class App(object):
         parser.add_argument('--region', default=default_region)
         subparsers = parser.add_subparsers()
 
-        view_subparser = subparsers.add_parser('view').add_subparsers()
+        view_subparser = subparsers.add_parser('view').add_subparsers() #not yet implemented
         view_sync_subparser = view_subparser.add_parser('sync')
         view_sync_subparser.set_defaults(func=self.view_sync)
         view_sync_subparser.add_argument('vault')
@@ -808,6 +842,10 @@ class App(object):
         vault_sync_subparser.add_argument('--fix', action='store_true')
         vault_sync_subparser.add_argument('--max-age', type=int, default=24,
                                           dest='max_age_hours')
+        vault_delete_subparser = vault_subparser.add_parser('delete')
+        vault_delete_subparser.set_defaults(func=self.vault_delete)
+        vault_delete_subparser.add_argument('name', metavar='vault_name')
+
         archive_subparser = subparsers.add_parser('archive').add_subparsers()
         archive_list_subparser = archive_subparser.add_parser('list')
         archive_list_subparser.set_defaults(func=self.archive_list)

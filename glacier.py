@@ -67,9 +67,9 @@ class config:
             self.default_region = w.readline()
             self.current_retrieval = w.readline()
             self.last_retrieved = w.readline()
-            self.total_storage = w.readline()
             self.only_free = w.readline()
             self.maximum_time_allowance = w.readline()
+            self.number_of_hour = w.readline()
             w.close()
         except IOError as e:
             print ("CACHE DOES NOT EXIST")
@@ -129,6 +129,7 @@ class Vault_Cache(object):
         region = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
         key = sqlalchemy.Column(sqlalchemy.String, nullable=False)
         last_synced = sqlalchemy.Column(sqlalchemy.String)
+        size = sqlalchemy.Column(sqlalchemy.Integer)
 
         def __init__(self, *args, **kwargs):
             super(Vault_Cache.Vault, self).__init__(*args, **kwargs)
@@ -149,7 +150,7 @@ class Vault_Cache(object):
         try:
             result.one().name
         except sqlalchemy.orm.exc.NoResultFound:
-            self.session.add(self.Vault(key=self.key, name=name, region=region))
+            self.session.add(self.Vault(key=self.key, name=name, region=region, size=0))
             self.session.commit()
     
     def get_vault(self, name, region):
@@ -507,11 +508,11 @@ class App(object):
             f.write("us-east-1\n")
             f.write("0\n")
             now = datetime.datetime.now()
-            today = now.strftime("%m/%d/%y")
+            today = now.strftime("%Y %j")
             f.write(today+"\n")
-            f.write("0\n")
             f.write("yes\n")
             f.write("30\n")
+            f.write("0\n")
             f.close()
         except IOError as e:
             print ("FILE ERROR")
@@ -524,9 +525,9 @@ class App(object):
             f.write(args.new_value+"\n")
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
-            f.write(loaded_config.total_storage)
             f.write(loaded_config.only_free)
             f.write(loaded_config.maximum_time_allowance)
+            f.write(loaded_config.number_of_hour)
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -539,9 +540,9 @@ class App(object):
             f.write(loaded_config.default_region)
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
-            f.write(loaded_config.total_storage)
             f.write(args.new_value+"\n")
             f.write(loaded_config.maximum_time_allowance)
+            f.write(loaded_config.number_of_hour)
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -554,9 +555,32 @@ class App(object):
             f.write(loaded_config.default_region)
             f.write(loaded_config.current_retrieval)
             f.write(loaded_config.last_retrieved)
-            f.write(loaded_config.total_storage)
             f.write(loaded_config.only_free)
             f.write(args.new_value+"\n")
+            f.write(loaded_config.number_of_hour)
+            f.close()
+        except IOError as e:
+            print ("File ERROR")
+    
+    def config_retrieve(self,retrieved,date):
+        try:
+            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
+            loaded_config = config()
+            retrieved += int(loaded_config.current_retrieval)
+            today = iso8601.parse_date(date)
+            date = today.strftime("%Y %j") +"\n"
+            new_hour = int(loaded_config.number_of_hour)
+            if (date != loaded_config.last_retrieved):
+                new_hour = 4
+            else:
+                new_hour += 4
+            f = open(config_path,'w')
+            f.write(loaded_config.default_region)
+            f.write(str(retrieved)+"\n")
+            f.write(date)
+            f.write(loaded_config.only_free)
+            f.write(loaded_config.maximum_time_allowance)
+            f.write(str(new_hour))
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -565,6 +589,8 @@ class App(object):
         for vault in self.connection.list_vaults():
             try:
                 result = self.v_cache.get_vault(vault.name,args.region).one()
+                result.size = vault.size
+                self.v_cache.mark_commit()
             except sqlalchemy.orm.exc.NoResultFound:
                 self.v_cache.add_vault(vault.name, args.region)
 
@@ -609,6 +635,7 @@ class App(object):
         result = self.v_cache.get_vault(vault.name,region).one()
         result.last_synced = job.creation_date
         self.v_cache.mark_commit()
+       # self.config_retrieve(6,job.creation_date)
 
     def _vault_sync(self, vault_name, max_age_hours, fix, wait, region):
         vault = self.connection.get_vault(vault_name)
@@ -712,6 +739,7 @@ class App(object):
                 filename = os.path.basename(name)
             with open(filename, 'wb') as f:
                 cls._write_archive_retrieval_job(f, job, args.multipart_size)
+        self.config_retrieve(job.archive_size,job.creation_date)
 
     def archive_retrieve_one(self, args, name):
         try:

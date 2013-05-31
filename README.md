@@ -115,11 +115,10 @@ Commands
 * <code>glacier config load <em>config-file</em></code>
 * <code>glacier config change {region,free,allownace} <em>new-value</em></code>
 * <code>glacier config download <em>config-file</em></code> #PROGRESS
-* <code>glacier view sync <em>vault-name</em></code> #PROGRESS
 * <code>glacier vault list</code>
 * <code>glacier vault create <em>vault-name</em></code>
 * <code>glacier vault delete <em>vault-name</em></code>
-* <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code> #PROGRESS
+* <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code>
 * <code>glacier archive list <em>vault-name</em></code>
 * <code>glacier archive upload [--name <em>archive-name</em>] <em>vault-name</em> <em>filename</em></code>
 * <code>glacier archive retrieve [--wait] [-o <em>filename</em>] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em></code>

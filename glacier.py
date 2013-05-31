@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+#vault_sync_time
 #Copyright (c) 2013 Robie Basak (modified by Dongkeun Lee)
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -127,7 +128,7 @@ class Vault_Cache(object):
         name = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
         region = sqlalchemy.Column(sqlalchemy.String, primary_key=True)
         key = sqlalchemy.Column(sqlalchemy.String, nullable=False)
-        last_synced = sqlalchemy.Column(sqlalchemy.Integer)
+        last_synced = sqlalchemy.Column(sqlalchemy.String)
 
         def __init__(self, *args, **kwargs):
             super(Vault_Cache.Vault, self).__init__(*args, **kwargs)
@@ -169,6 +170,9 @@ class Vault_Cache(object):
             self.session.commit()
         except sqlalchemy.orm.exc.NoResultFound:
             return 1
+    
+    def mark_commit(self):
+        self.session.commit()
 
 class Archive_Cache(object):
     Base = sqlalchemy.ext.declarative.declarative_base()
@@ -474,9 +478,6 @@ class App(object):
             if job_list:
                 print(*job_list, sep="\n")
 
-    def view_sync(self, args):
-        print("hello")
-
     def config_initialize(self, args):
         try:
             f = open(args.config_file,'r')
@@ -585,7 +586,7 @@ class App(object):
         self.connection.create_vault(args.name)
         self.v_cache.add_vault(args.name, args.region)
 
-    def _vault_sync_reconcile(self, vault, job, fix=False):
+    def _vault_sync_reconcile(self, vault, job, region, fix=False):
         response = job.get_output()
         inventory_date = iso8601_to_unix_timestamp(response['InventoryDate'])
         job_creation_date = iso8601_to_unix_timestamp(job.creation_date)
@@ -603,18 +604,20 @@ class App(object):
                 upstream_inventory_job_creation_date=job_creation_date,
                 fix=fix)
             seen_ids.append(id)
-        self.cache.mark_only_seen(vault.name, inventory_date, seen_ids,
-                                  fix=fix)
+        self.cache.mark_only_seen(vault.name, inventory_date, seen_ids, fix=fix)
         self.cache.mark_commit()
+        result = self.v_cache.get_vault(vault.name,region).one()
+        result.last_synced = job.creation_date
+        self.v_cache.mark_commit()
 
-    def _vault_sync(self, vault_name, max_age_hours, fix, wait):
+    def _vault_sync(self, vault_name, max_age_hours, fix, wait, region):
         vault = self.connection.get_vault(vault_name)
         inventory_jobs = find_inventory_jobs(vault,
                                              max_age_hours=max_age_hours)
 
         complete_job = find_complete_job(inventory_jobs)
         if complete_job:
-            self._vault_sync_reconcile(vault, complete_job, fix=fix)
+            self._vault_sync_reconcile(vault, complete_job, region, fix=fix)
         elif has_pending_job(inventory_jobs):
             if wait:
                 complete_job = wait_until_job_completed(inventory_jobs)
@@ -625,7 +628,7 @@ class App(object):
             job = vault.retrieve_inventory()
             if wait:
                 wait_until_job_completed([job])
-                self._vault_sync_reconcile(vault, job, fix=fix)
+                self._vault_sync_reconcile(vault, job, region, fix=fix)
             else:
                 raise RetryConsoleError('queued inventory job for %r' %
                         vault.name)
@@ -634,10 +637,21 @@ class App(object):
         return self._vault_sync(vault_name=args.name,
                                 max_age_hours=args.max_age_hours,
                                 fix=args.fix,
-                                wait=args.wait)
+                                wait=args.wait, region=args.region)
 
     def archive_list(self, args):
         archive_list = list(self.cache.get_archive_list(args.vault))
+        try:
+            time = self.v_cache.get_vault(args.vault, args.region).one().last_synced
+        except sqlalchemy.orm.exc.NoResultFound:
+            time = "DOES NOT EXIST"
+        print("LAST SYNCED DATE: ",time)
+        try:
+            result = self.connection.get_vault(args.vault)
+            print("LAST INVENTORY DATE: ",result.last_inventory_date)
+        except boto.glacier.exceptions.UnexpectedHTTPResponseError:
+            print("NO INVENTORY DATE")
+        print("------------------------------")
         if archive_list:
             print(*archive_list, sep="\n")
 
@@ -655,7 +669,6 @@ class App(object):
             except:
                 raise RuntimeError('Archive name not specified. Use --name')
             name = os.path.basename(full_name)
-
         vault = self.connection.get_vault(args.vault)
         archive_id = vault.create_archive_from_file(file_obj=args.file, description=name)
         self.cache.add_archive(args.vault, name, archive_id)
@@ -805,11 +818,6 @@ class App(object):
         parser = argparse.ArgumentParser()
         parser.add_argument('--region', default=default_region)
         subparsers = parser.add_subparsers()
-
-        view_subparser = subparsers.add_parser('view').add_subparsers() #not yet implemented
-        view_sync_subparser = view_subparser.add_parser('sync')
-        view_sync_subparser.set_defaults(func=self.view_sync)
-        view_sync_subparser.add_argument('vault')
 
         config_subparser = subparsers.add_parser('config').add_subparsers()
         config_create_subparser = config_subparser.add_parser('create')

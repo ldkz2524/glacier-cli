@@ -561,7 +561,6 @@ class App(object):
             f.close()
         except IOError as e:
             print ("File ERROR")
-    
     def config_retrieve(self,retrieved,date):
         try:
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
@@ -635,10 +634,13 @@ class App(object):
         result = self.v_cache.get_vault(vault.name,region).one()
         result.last_synced = job.creation_date
         self.v_cache.mark_commit()
-       # self.config_retrieve(6,job.creation_date)
 
     def _vault_sync(self, vault_name, max_age_hours, fix, wait, region):
-        vault = self.connection.get_vault(vault_name)
+        try:
+            vault = self.connection.get_vault(vault_name)
+        except boto.glacier.exceptions.UnexpectedHTTPResponseError:
+            print("VAULT NOT FOUND")
+            sys.exit(1)
         inventory_jobs = find_inventory_jobs(vault,
                                              max_age_hours=max_age_hours)
 
@@ -652,13 +654,16 @@ class App(object):
                 raise RetryConsoleError('job still pending for inventory on %r' %
                                         vault.name)
         else:
-            job = vault.retrieve_inventory()
-            if wait:
-                wait_until_job_completed([job])
-                self._vault_sync_reconcile(vault, job, region, fix=fix)
-            else:
-                raise RetryConsoleError('queued inventory job for %r' %
-                        vault.name)
+            try:
+                job = vault.retrieve_inventory()
+                if wait:
+                    wait_until_job_completed([job])
+                    self._vault_sync_reconcile(vault, job, region, fix=fix)
+                else:
+                    raise RetryConsoleError('queued inventory job for %r' % vault.name)
+            except boto.glacier.exceptions.UnexpectedHTTPResponseError:
+                print("vault inventory does not exist")
+                
 
     def vault_sync(self, args):
         return self._vault_sync(vault_name=args.name,
@@ -739,7 +744,6 @@ class App(object):
                 filename = os.path.basename(name)
             with open(filename, 'wb') as f:
                 cls._write_archive_retrieval_job(f, job, args.multipart_size)
-        self.config_retrieve(job.archive_size,job.creation_date)
 
     def archive_retrieve_one(self, args, name):
         try:
@@ -762,6 +766,7 @@ class App(object):
         else:
             # create an archive retrieval job
             job = vault.retrieve_archive(archive_id)
+            self.config_retrieve(job.archive_size,job.creation_date)
             if args.wait:
                 wait_until_job_completed([job])
                 self._archive_retrieve_completed(args, job, name)

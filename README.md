@@ -114,14 +114,14 @@ Commands
 * <code>glacier config create <em>config-file</em></code>
 * <code>glacier config load <em>config-file</em></code>
 * <code>glacier config change {region,free,allownace} <em>new-value</em></code>
-* <code>glacier config download <em>config-file</em></code> #PROGRESS
+* <code>glacier config download <em>config-file</em></code> #PROGRESS (PROBABLY WHEN CONFIG FILE IS CONVERTED TO AN ACTUAL CONFIG FILE FORMAT)
 * <code>glacier vault list</code>
 * <code>glacier vault create <em>vault-name</em></code>
 * <code>glacier vault delete <em>vault-name</em></code>
 * <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code>
 * <code>glacier archive list <em>vault-name</em></code>
 * <code>glacier archive upload [--name <em>archive-name</em>] <em>vault-name</em> <em>filename</em></code>
-* <code>glacier archive retrieve [--wait] [-o <em>filename</em>] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em></code> #RETRIEVE CONFIG UPDATE PROGRESS
+* <code>glacier archive retrieve [--wait] [-o <em>filename</em>] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em></code> #PROGRESS ON PRICING HAS TO BE DONE
 * <code>glacier archive retrieve [--wait] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em> [<em>archive-name</em>...]</code>
 * <code>glacier archive delete <em>vault-name</em> <em>archive-name</em></code>
 * <code>glacier job list</code>
@@ -223,3 +223,7 @@ Contact
   issue](https://github.com/ldkz2524/glacier-cli/issues).
 * Modified based on [glacier-cli github](https://github.com/basak/glacier-cli)
 * Modified by Dongkeun Lee (ldkz2524@ucla.edu)
+
+Progress
+--------
+*since config file updating has been doen, pricing calculation functions has to be implemented.

@@ -121,7 +121,7 @@ Commands
 * <code>glacier vault sync [--wait] [--fix] [--max-age <em>hours</em>] <em>vault-name</em></code>
 * <code>glacier archive list <em>vault-name</em></code>
 * <code>glacier archive upload [--name <em>archive-name</em>] <em>vault-name</em> <em>filename</em></code>
-* <code>glacier archive retrieve [--wait] [-o <em>filename</em>] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em></code> #PROGRESS ON PRICING HAS TO BE DONE
+* <code>glacier archive retrieve [--wait] [-o <em>filename</em>] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em></code> #PROGRESS
 * <code>glacier archive retrieve [--wait] [--multipart-size <em>bytes</em>] <em>vault-name</em> <em>archive-name</em> [<em>archive-name</em>...]</code>
 * <code>glacier archive delete <em>vault-name</em> <em>archive-name</em></code>
 * <code>glacier job list</code>
@@ -226,4 +226,5 @@ Contact
 
 Progress
 --------
-*since config file updating has been doen, pricing calculation functions has to be implemented.
+*As i get into thinking about pricing model of Amazon Glacier, it seems as if it is impossible to calculate even the estimate of the pricing plan. The factors that make it almost impossible are the "peak billable rate" and timing.
+*Now when the user requests for retrieval the program displays how much the user have retrieved today and how much the user can retrieve for free

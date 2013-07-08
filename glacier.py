@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-#vault_sync_time
 #Copyright (c) 2013 Robie Basak (modified by Dongkeun Lee)
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -65,11 +64,8 @@ class config:
             config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
             w = open(config_path,'r')
             self.default_region = w.readline()
-            self.current_retrieval = w.readline()
-            self.last_retrieved = w.readline()
             self.only_free = w.readline()
             self.maximum_time_allowance = w.readline()
-            self.number_of_hour = w.readline()
             w.close()
         except IOError as e:
             print ("CACHE DOES NOT EXIST")
@@ -130,6 +126,8 @@ class Vault_Cache(object):
         key = sqlalchemy.Column(sqlalchemy.String, nullable=False)
         last_synced = sqlalchemy.Column(sqlalchemy.String)
         size = sqlalchemy.Column(sqlalchemy.Integer)
+        current_retrieval = sqlalchemy.Column(sqlalchemy.Integer)
+        last_retrieved = sqlalchemy.Column(sqlalchemy.String)
 
         def __init__(self, *args, **kwargs):
             super(Vault_Cache.Vault, self).__init__(*args, **kwargs)
@@ -150,7 +148,7 @@ class Vault_Cache(object):
         try:
             result.one().name
         except sqlalchemy.orm.exc.NoResultFound:
-            self.session.add(self.Vault(key=self.key, name=name, region=region, size=0))
+            self.session.add(self.Vault(key=self.key, name=name, region=region, size=0, current_retrieval=0))
             self.session.commit()
     
     def get_vault(self, name, region):
@@ -171,7 +169,17 @@ class Vault_Cache(object):
             self.session.commit()
         except sqlalchemy.orm.exc.NoResultFound:
             return 1
-    
+
+    def total_vault_size(self, region):
+        size = 0
+        for vault in (
+                self.session.query(self.Vault).
+                             filter_by(key=self.key,
+                                       region=region).
+                             order_by(self.Vault.name)):
+            size += vault.size
+        return size    
+
     def mark_commit(self):
         self.session.commit()
 
@@ -221,6 +229,8 @@ class Archive_Cache(object):
         try:
             result = self._get_archive_query_by_ref(vault, ref).one()
         except sqlalchemy.orm.exc.NoResultFound:
+            raise KeyError(ref)
+        except sqlalchemy.orm.exc.MultipleResultsFound:
             raise KeyError(ref)
         return result.id
 
@@ -502,17 +512,9 @@ class App(object):
             f = open(args.config_file,'w')
             f.write("<write access key here>\n")
             f.write("<write secret key here>\n")
-            f.write(args.config_file + "_archive\n")
-            f.write(args.config_file + "_vault\n")
-            f.write(args.config_file + "_job\n")
             f.write("us-east-1\n")
-            f.write("0\n")
-            now = datetime.datetime.now()
-            today = now.strftime("%Y %j")
-            f.write(today+"\n")
             f.write("yes\n")
             f.write("30\n")
-            f.write("0\n")
             f.close()
         except IOError as e:
             print ("FILE ERROR")
@@ -523,11 +525,8 @@ class App(object):
             loaded_config = config()
             f = open(config_path,'w')
             f.write(args.new_value+"\n")
-            f.write(loaded_config.current_retrieval)
-            f.write(loaded_config.last_retrieved)
             f.write(loaded_config.only_free)
             f.write(loaded_config.maximum_time_allowance)
-            f.write(loaded_config.number_of_hour)
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -538,11 +537,8 @@ class App(object):
             loaded_config = config()
             f = open(config_path,'w')
             f.write(loaded_config.default_region)
-            f.write(loaded_config.current_retrieval)
-            f.write(loaded_config.last_retrieved)
             f.write(args.new_value+"\n")
             f.write(loaded_config.maximum_time_allowance)
-            f.write(loaded_config.number_of_hour)
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -553,33 +549,8 @@ class App(object):
             loaded_config = config()
             f = open(config_path,'w')
             f.write(loaded_config.default_region)
-            f.write(loaded_config.current_retrieval)
-            f.write(loaded_config.last_retrieved)
             f.write(loaded_config.only_free)
             f.write(args.new_value+"\n")
-            f.write(loaded_config.number_of_hour)
-            f.close()
-        except IOError as e:
-            print ("File ERROR")
-    def config_retrieve(self,retrieved,date):
-        try:
-            config_path = os.path.join(get_user_cache_dir(), 'glacier-cli', 'config')
-            loaded_config = config()
-            retrieved += int(loaded_config.current_retrieval)
-            today = iso8601.parse_date(date)
-            date = today.strftime("%Y %j") +"\n"
-            new_hour = int(loaded_config.number_of_hour)
-            if (date != loaded_config.last_retrieved):
-                new_hour = 4
-            else:
-                new_hour += 4
-            f = open(config_path,'w')
-            f.write(loaded_config.default_region)
-            f.write(str(retrieved)+"\n")
-            f.write(date)
-            f.write(loaded_config.only_free)
-            f.write(loaded_config.maximum_time_allowance)
-            f.write(str(new_hour))
             f.close()
         except IOError as e:
             print ("File ERROR")
@@ -588,8 +559,6 @@ class App(object):
         for vault in self.connection.list_vaults():
             try:
                 result = self.v_cache.get_vault(vault.name,args.region).one()
-                result.size = vault.size
-                self.v_cache.mark_commit()
             except sqlalchemy.orm.exc.NoResultFound:
                 self.v_cache.add_vault(vault.name, args.region)
 
@@ -633,6 +602,7 @@ class App(object):
         self.cache.mark_commit()
         result = self.v_cache.get_vault(vault.name,region).one()
         result.last_synced = job.creation_date
+        result.size = vault.size
         self.v_cache.mark_commit()
 
     def _vault_sync(self, vault_name, max_age_hours, fix, wait, region):
@@ -749,7 +719,7 @@ class App(object):
         try:
             archive_id = self.cache.get_archive_id(args.vault, name)
         except KeyError:
-            raise ConsoleError('archive %r not found' % name)
+            raise ConsoleError('archive %r not found or multiple occurance' % name)
 
         vault = self.connection.get_vault(args.vault)
         retrieval_jobs = find_retrieval_jobs(vault, archive_id)
@@ -766,7 +736,11 @@ class App(object):
         else:
             # create an archive retrieval job
             job = vault.retrieve_archive(archive_id)
-            self.config_retrieve(job.archive_size,job.creation_date)
+        
+            result = self.v_cache.get_vault(vault.name,args.region).one()
+            result.current_retrieval += job.archive_size
+            self.v_cache.mark_commit()
+
             if args.wait:
                 wait_until_job_completed([job])
                 self._archive_retrieve_completed(args, job, name)
@@ -778,6 +752,24 @@ class App(object):
             raise ConsoleError('cannot specify output filename with multi-archive retrieval')
         success_list = []
         retry_list = []
+        
+        free_size = self.v_cache.total_vault_size(args.region)
+        free_size = free_size * 0.05
+        free_size = free_size / 31
+        print("Daily Allowance in bytes:",free_size)
+        now = datetime.datetime.now()
+        now = now.strftime("%Y %j")
+        size = 0
+        for vault in self.v_cache.get_vault_list(args.region):
+            result = self.v_cache.get_vault(vault,args.region).one()
+            if (result.last_retrieved != now):
+                result.current_retrieval = 0
+                result.last_retrieved = now
+                self.v_cache.mark_commit()
+            size += result.current_retrieval
+        result = self.v_cache.get_vault(args.vault,args.region).one()
+        print("Today you've retrieved in bytes:",size)
+
         for name in args.names:
             try:
                 self.archive_retrieve_one(args, name)

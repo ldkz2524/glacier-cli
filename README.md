@@ -69,6 +69,8 @@ Before you use Amazon Glacier, you should make yourself familiar with [how much
 it costs](http://aws.amazon.com/glacier/pricing/). Note that archive retrieval
 costs are complicated and [may be a lot more than you
 expect](http://www.daemonology.net/blog/2012-09-04-thoughts-on-glacier-pricing.html).
+Costs are annoyingly complicated in many senses, so it is inefficient for this program to calculate. However, this program will notify the user what their free retrieval size is and how much they've retrieved today
+One thing to note is that free retrieval is based on the latest inventory that has been synced to the glacier-cli, which means that deleting or adding archives after inventory has been created, can cause discrepancies in such values.
 
 Installation
 ------------
@@ -115,6 +117,7 @@ Commands
 * <code>glacier config load <em>config-file</em></code>
 * <code>glacier config change {region,free,allownace} <em>new-value</em></code>
 * <code>glacier config download <em>config-file</em></code> #PROGRESS (PROBABLY WHEN CONFIG FILE IS CONVERTED TO AN ACTUAL CONFIG FILE FORMAT)
+* <code>glacier config stat</code>
 * <code>glacier vault list</code>
 * <code>glacier vault create <em>vault-name</em></code>
 * <code>glacier vault delete <em>vault-name</em></code>
@@ -211,11 +214,6 @@ Use `glacier archive retrieve <vault> <name> -o-` to download data to standard
 output. glacier-cli will not output any data to standard output apart from the
 archive data in order to prevent corrupting the output data stream.
 
-Future Directions
------------------
-
-* Add resume functionality for uploads and downloads
-
 Contact
 -------
 
@@ -227,4 +225,5 @@ Contact
 Progress
 --------
 *As i get into thinking about pricing model of Amazon Glacier, it seems as if it is impossible to calculate even the estimate of the pricing plan. The factors that make it almost impossible are the "peak billable rate" and timing.
-*Now when the user requests for retrieval the program displays how much the user have retrieved today and how much the user can retrieve for free
+*Now when the user requests for retrieval, the program will display how much data has been retrieved today and how much data will be retrieved by this request. And based on config's only free row, the program will retrieve. (so the only case the retrieval wouln't work is if the retrieval is not free and only_free row has yes as its value)
+*Now config stat command gives basic stats

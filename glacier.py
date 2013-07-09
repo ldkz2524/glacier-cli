@@ -194,6 +194,7 @@ class Archive_Cache(object):
         last_seen_upstream = sqlalchemy.Column(sqlalchemy.Integer)
         created_here = sqlalchemy.Column(sqlalchemy.Integer)
         deleted_here = sqlalchemy.Column(sqlalchemy.Integer)
+        size = sqlalchemy.Column(sqlalchemy.Integer)
 
         def __init__(self, *args, **kwargs):
             self.created_here = time.time()
@@ -210,9 +211,9 @@ class Archive_Cache(object):
         self.Session.configure(bind=self.engine)
         self.session = self.Session()
 
-    def add_archive(self, vault, name, id):
+    def add_archive(self, vault, name, id, size):
         self.session.add(self.Archive(key=self.key,
-                                      vault=vault, name=name, id=id))
+                                      vault=vault, name=name, id=id, size=size))
         self.session.commit()
 
     def _get_archive_query_by_ref(self, vault, ref):
@@ -302,7 +303,7 @@ class Archive_Cache(object):
 
     def mark_seen_upstream(
             self, vault, id, name, upstream_creation_date,
-            upstream_inventory_date, upstream_inventory_job_creation_date,
+            upstream_inventory_date, upstream_inventory_job_creation_date,size,
             fix=False):
 
         # Inventories don't get recreated unless the vault has changed.
@@ -339,7 +340,7 @@ class Archive_Cache(object):
             self.session.add(
                 self.Archive(
                     key=self.key, vault=vault, name=name, id=id,
-                    last_seen_upstream=last_seen_upstream
+                    last_seen_upstream=last_seen_upstream, size=size
                     )
                 )
         else:
@@ -555,17 +556,41 @@ class App(object):
         except IOError as e:
             print ("File ERROR")
 
+    def config_stat(self,args):
+        print("Current Region:                 ",args.region)
+        free_size = self.v_cache.total_vault_size(args.region)
+        print("Total Storage in bytes:         ",free_size)
+        free_size = free_size * 0.05
+        free_size = free_size / 31
+        print("Daily Free Retrieval in bytes:  ",free_size)
+        now = datetime.datetime.now()
+        now = now.strftime("%Y %j")
+        size = 0
+        for vault in self.v_cache.get_vault_list(args.region):
+            result = self.v_cache.get_vault(vault,args.region).one()
+            if (result.last_retrieved != now):
+                result.current_retrieval = 0
+                result.last_retrieved = now
+                self.v_cache.mark_commit()
+            size += result.current_retrieval
+        print("Today's retrieval in bytes:     ",size)
+        loaded_config = config()
+        print("Retrieve only if it is free:    ",loaded_config.only_free.rstrip('\n'))
+        print("Maximum Retrieval Period (days):",loaded_config.maximum_time_allowance.rstrip('\n'))
+
     def vault_list(self, args):
         for vault in self.connection.list_vaults():
             try:
                 result = self.v_cache.get_vault(vault.name,args.region).one()
+                result.size = vault.size
+                self.v_cache.mark_commit()
             except sqlalchemy.orm.exc.NoResultFound:
                 self.v_cache.add_vault(vault.name, args.region)
 
         for vault in self.v_cache.get_vault_list(args.region):
             try:
                 result = self.connection.get_vault(vault)
-                print(result.name)
+                print(result.name,result.size,"bytes")
             except boto.glacier.exceptions.UnexpectedHTTPResponseError:
                 self.v_cache.delete_vault(vault,args.region)
 
@@ -589,6 +614,7 @@ class App(object):
             id = archive['ArchiveId']
             name = archive['ArchiveDescription']
             creation_date = iso8601_to_unix_timestamp(archive['CreationDate'])
+            size = archive['Size']
             self.cache.mark_seen_upstream(
                 vault=vault.name,
                 id=id,
@@ -596,6 +622,7 @@ class App(object):
                 upstream_creation_date=creation_date,
                 upstream_inventory_date=inventory_date,
                 upstream_inventory_job_creation_date=job_creation_date,
+                size=size,
                 fix=fix)
             seen_ids.append(id)
         self.cache.mark_only_seen(vault.name, inventory_date, seen_ids, fix=fix)
@@ -673,7 +700,8 @@ class App(object):
             name = os.path.basename(full_name)
         vault = self.connection.get_vault(args.vault)
         archive_id = vault.create_archive_from_file(file_obj=args.file, description=name)
-        self.cache.add_archive(args.vault, name, archive_id)
+        size = os.path.getsize(args.file.name)
+        self.cache.add_archive(args.vault, name, archive_id, size)
 
     @staticmethod
     def _write_archive_retrieval_job(f, job, multipart_size):
@@ -715,11 +743,13 @@ class App(object):
             with open(filename, 'wb') as f:
                 cls._write_archive_retrieval_job(f, job, args.multipart_size)
 
-    def archive_retrieve_one(self, args, name):
+    def archive_retrieve_one(self, args, name,free,used):
         try:
             archive_id = self.cache.get_archive_id(args.vault, name)
         except KeyError:
             raise ConsoleError('archive %r not found or multiple occurance' % name)
+        result = self.cache._get_archive_query_by_ref(args.vault, name).one()
+            
 
         vault = self.connection.get_vault(args.vault)
         retrieval_jobs = find_retrieval_jobs(vault, archive_id)
@@ -734,18 +764,25 @@ class App(object):
             else:
                 raise RetryConsoleError('job still pending for archive %r' % name)
         else:
-            # create an archive retrieval job
-            job = vault.retrieve_archive(archive_id)
+            print("Retrieving for free:                ",free-used,"bytes")
+            print("Retrieving archive with the size of:",result.size,"bytes")
+            loaded_config = config()
+            if (free-used < result.size):
+                if(loaded_config.only_free.rstrip('\n')=="yes"):
+                    print("Retrieval Not Free")
+                else:
+                    # create an archive retrieval job
+                    job = vault.retrieve_archive(archive_id)
         
-            result = self.v_cache.get_vault(vault.name,args.region).one()
-            result.current_retrieval += job.archive_size
-            self.v_cache.mark_commit()
+                    result = self.v_cache.get_vault(vault.name,args.region).one()
+                    result.current_retrieval += job.archive_size
+                    self.v_cache.mark_commit()
 
-            if args.wait:
-                wait_until_job_completed([job])
-                self._archive_retrieve_completed(args, job, name)
-            else:
-                raise RetryConsoleError('queued retrieval job for archive %r' % name)
+                    if args.wait:
+                        wait_until_job_completed([job])
+                        self._archive_retrieve_completed(args, job, name)
+                    else:
+                        raise RetryConsoleError('queued retrieval job for archive %r' % name)
 
     def archive_retrieve(self, args):
         if len(args.names) > 1 and args.output_filename:
@@ -756,7 +793,7 @@ class App(object):
         free_size = self.v_cache.total_vault_size(args.region)
         free_size = free_size * 0.05
         free_size = free_size / 31
-        print("Daily Allowance in bytes:",free_size)
+        ##print("Daily Allowance in bytes:",free_size)
         now = datetime.datetime.now()
         now = now.strftime("%Y %j")
         size = 0
@@ -767,12 +804,11 @@ class App(object):
                 result.last_retrieved = now
                 self.v_cache.mark_commit()
             size += result.current_retrieval
-        result = self.v_cache.get_vault(args.vault,args.region).one()
-        print("Today you've retrieved in bytes:",size)
+        ##print("Today you've retrieved in bytes:",size)
 
         for name in args.names:
             try:
-                self.archive_retrieve_one(args, name)
+                self.archive_retrieve_one(args, name,free_size,size)
             except RetryConsoleError, e:
                 retry_list.append(e.message)
             else:
@@ -785,7 +821,7 @@ class App(object):
         try:
             archive_id = self.cache.get_archive_id(args.vault, args.name)
         except KeyError:
-            raise ConsoleError('archive %r not found' % args.name)
+            raise ConsoleError('archive %r not found or multiple occurance' % args.name)
         vault = self.connection.get_vault(args.vault)
         vault.delete_archive(archive_id)
         self.cache.delete_archive(args.vault, args.name)
@@ -798,7 +834,7 @@ class App(object):
                 last_seen = None
             else:
                 if not args.quiet:
-                    print('archive %r not found' % args.name, file=sys.stderr)
+                    print('archive %r not found or multiple occurance' % args.name, file=sys.stderr)
                 return
 
         def too_old(last_seen):
@@ -861,6 +897,8 @@ class App(object):
         config_change_day_subparser = config_change_subparser.add_parser('allowance')
         config_change_day_subparser.set_defaults(func=self.config_change_day)
         config_change_day_subparser.add_argument('new_value', metavar='Maximum_no_of_days_for_retrieval')
+        config_stat_subparser = config_subparser.add_parser('stat')
+        config_stat_subparser.set_defaults(func=self.config_stat)
         #develop config download
         
         vault_subparser = subparsers.add_parser('vault').add_subparsers()
